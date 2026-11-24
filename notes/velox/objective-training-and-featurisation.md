@@ -75,7 +75,9 @@ the system the paper proposes as minimal. (`main` replaced this with a sum-based
 ## 2. Training lifecycle: nothing persists
 
 `[read]` With `neighbor_sampling: []` (`config/velox.yml:80`) the pipeline batches edges and
-nothing else. There is:
+nothing else. (Added 2026-11-24: and the batch is the window. `velox.yml` sets no
+`edge_batch_size`, so each 15-minute graph is one batch and one optimizer step, with the loss
+averaged over its edges; see [`time-handling.md`](time-handling.md) §3.) There is:
 
 - no memory module (`use_memory: False`, `:96`),
 - no neighbour sampler — the list is empty, so none is constructed,
@@ -90,9 +92,11 @@ this axis it is cleaner, precisely because it models less.
 
 What remains shared with ORTHRUS is the upstream preprocessing: `time_window_size: 15.0`
 (`config/velox.yml:7`) and ORTHRUS-style graph building (`used_method: orthrus`, `:5`) `[read]`. Runs of identical operations on
-the same node pair still collapse to one edge before VELOX sees them. The measurement from the
+the same node pair still collapse to one edge before VELOX sees them. ~~The measurement from the
 ORTHRUS pass — CADETS 18,699,410 filtered events → 6,454,730 edges, ~16% of the unfiltered
-corpus — applies to VELOX unchanged, since it reads the same graphs. A model with no temporal
+corpus — applies to VELOX unchanged, since it reads the same graphs.~~ CORRECTION (2026-11-24):
+VELOX's graph builder is not byte-identical to ORTHRUS's: it also writes each day's trailing
+window, and its splits differ. Its own numbers are measured in [`time-handling.md`](time-handling.md) §1. A model with no temporal
 mechanism is, admittedly, the one least harmed by losing burst structure.
 
 ## 3. Featurisation: SC6 is genuinely fixed

@@ -104,21 +104,33 @@ node_out_dim)`).
 note reported that `LinearEncoder`'s dropout was constructed at `p=0.0` and therefore dead.
 That is true of `main` only. On the artifact the class takes no `dropout` argument at all: the
 encoder is *literally and exactly* `nn.Linear`, which is what the paper says it is
-(`resources/VELOX.txt:886-887`). The tuned `encoder.dropout: 0.3` regularises the decoder, as
-intended. **Framework drift:** `main`'s `LinearEncoder`
+(`resources/VELOX.txt:886-887`). ~~The tuned `encoder.dropout: 0.3` regularises the decoder, as
+intended.~~ **CORRECTION (2026-11-24):** it regularises nothing. `encoder.dropout` is read only
+by the `graph_attention`, `sage` and `rcaid_gat` encoders (`src/factory.py:83-125`), and
+VELOX's decoder architecture `linear(0.5) | relu` (`config/velox.yml:106`) contains no
+`dropout(...)` group, which is the only way `build_mlp_from_string` adds one
+(`src/provnet_utils.py:458-498`). VELOX trains with no dropout anywhere, although its config
+says `dropout: 0.3` (`:82`). **Framework drift:** `main`'s `LinearEncoder`
 (`pidsmaker/encoders/linear_encoder.py:4-16`) gained a `dropout=0.0` parameter that
 `pidsmaker/factory.py:244-245` never passes — so the knob is unreachable *there*. Worth knowing
 if this thesis reuses the framework; it is **not** a criticism of the paper.
 
-**(b) One shared projection, not two.** The tuple branch is taken only when the batch supplies
-`(x_src, x_dst)`; VELOX's node features arrive as a single tensor, so one `lin1` projects every
-node. The paper's Fig. 10 describes "source and destination entity embeddings ... processed
+**(b) One shared projection, not two.** One `lin1` projects both endpoints.
+**CORRECTION (2026-11-24):** an earlier version said the features arrive as a single tensor, so
+the tuple branch is not taken. It is taken. `predict_edge_type` is not in `NODE_LEVEL_METHODS`
+(`src/config.py:54`, `:962-964`), so `Model._reshape_x` hands the encoder the per-edge pair
+`(batch.x_src, batch.x_dst)` (`src/model.py:115-120`), and `LinearEncoder` returns
+`(lin1(x_src), lin1(x_dst))`. The batch loader does reindex the window and computes a per-node
+`x` by scatter-mean (`src/factory.py:433-436`, `src/data_utils.py:308-341`), but the
+edge-level path never reads it. The conclusion stands: the same weights, both ends. The paper's Fig. 10 describes "source and destination entity embeddings ... processed
 through separate linear layers to capture orientation-specific semantics"
 (`resources/VELOX.txt:928-931`) `[paper]`. That separation is real but lives in the **decoder**,
 not the encoder. The encoder treats a node identically whichever end of an edge it sits on.
 
-**(c) There is no message passing.** `src/model.py:69` indexes the encoder output by the edge
-endpoints:
+**(c) There is no message passing.** (CORRECTION 2026-11-24: since the encoder returns a tuple,
+`src/model.py:64-65` takes `h_src, h_dst = h` and the line quoted below is not executed for
+VELOX; it is the branch for encoders returning one `(N, d)` tensor. The conclusion is the same.)
+`src/model.py:69` indexes the encoder output by the edge endpoints:
 
 ```python
 h_src, h_dst = (h[edge_index[0]], h[edge_index[1]]) ...
@@ -130,11 +142,14 @@ word2vec-plus-type features are indistinguishable to VELOX however differently t
 
 ## 3. What reaches the model
 
-`[read]` Node features are `node_emb,node_type` (`velox.yml:79`): a 128-dimensional
-`feature_word2vec` vector (`:18`, `:21`) concatenated with a 3-way node-type one-hot
+`[read]` Node features are `node_emb,node_type` (`velox.yml:79`): a `feature_word2vec` vector,
+128-dimensional by default (`:18`, `:21`) and 64-dimensional in the tuned E3 configs that
+produce the reported numbers (`config/tuned_baselines/{cadets,theia}_e3/tuned_velox.yml:5`), concatenated with a 3-way node-type one-hot
 (`num_node_types: 3`, `src/config.py:399`). Edge features are `edge_type` only (`:81`).
 
-**No temporal signal of any kind.** `use_time_order_encoding: False` (`:97`), no time encoder,
+**No temporal signal of any kind** — at inference. Where time does act, in training (one
+optimizer step per window, fusion per window), and the measurements behind it: [`time-handling.md`](time-handling.md).
+ `use_time_order_encoding: False` (`:97`), no time encoder,
 no Δt. Timestamps reach the batcher, which orders edges, and stop there. This places VELOX at
 the bottom of the chapter's "how time enters each system" ordering:
 

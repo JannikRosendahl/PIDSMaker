@@ -136,7 +136,11 @@ for model_epoch_dir in sorted_files:
 `stats["adp_score"]` is computed on the **test** split. In `node_evaluation.py`, `val_tw_path`
 is consulted at `:21` for the threshold and nowhere else; every score in `results` comes from
 `test_tw_path` (`:28-30`), and `adp_score` is computed from those scores at `:320` `[read]`.
-With `num_epochs: 8` (`config/velox.yml:70`) that is a maximum over eight candidates.
+With `num_epochs: 8` (`config/velox.yml:70`) ~~that is a maximum over eight candidates~~.
+**CORRECTION (2026-11-24):** over five. Validation and test are scored only when
+`(epoch+1) % 2 == 0 or epoch == 0` (`src/detection/training_methods/orthrus_gnn_training.py:130`),
+so edge losses exist for epochs 0, 1, 3, 5 and 7, and those five directories are what
+`evaluation.py:31` iterates.
 
 **Framework drift, and it runs the wrong way:** `main` at least exposes the rule as
 `best_model_selection`, defaulting to `best_adp` across all system configs
